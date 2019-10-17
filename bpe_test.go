@@ -1,6 +1,7 @@
 package bpe
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -19,7 +20,7 @@ func TestDecodedTokenToString(t *testing.T) {
 	require.Equal(t, "abacc", word)
 }
 
-func TestReadModel(t *testing.T) {
+func TestReadModelFromText(t *testing.T) {
 	reader := strings.NewReader(`5 4
 99 6
 98 7
@@ -30,7 +31,7 @@ func TestReadModel(t *testing.T) {
 4 6 10
 4 5 11
 4 7 12
-1 0 2 4`)
+1 0 2 3`)
 	expected := Model{
 		map[rune]TokenID{97: 8, 98: 7, 99: 6, 100: 5, 95: 4},
 		map[TokenID]rune{4: 95, 5: 100, 6: 99, 7: 98, 8: 97},
@@ -38,8 +39,59 @@ func TestReadModel(t *testing.T) {
 		map[TokenID]EncodedToken{4: {4}, 5: {5}, 6: {6}, 7: {7}, 8: {8}, 9: {4, 8}, 10: {4, 6}, 11: {4, 5}, 12: {4, 7}},
 		map[string]TokenID{"a": 8, "b": 7, "c": 6, "d": 5, "_": 4,
 			"_a": 9, "_b": 12, "_c": 10, "_d": 11},
-		specialTokens{1, 0, 2, 4},
+		specialTokens{1, 0, 2, 3},
 	}
-	model, _ := ReadModelFromText(reader)
+	model, err := ReadModelFromText(reader)
+	require.NoError(t, err)
+	require.Equal(t, expected, *model)
+}
+
+func TestSpecialTokensToBin(t *testing.T) {
+	specials := specialTokens{1, 259, 2*256*256 + 37*256 + 2, -256 * 256 * 256 * 127}
+	bytesArray := []byte{0, 0, 0, 1, 0, 0, 1, 3, 0, 2, 37, 2, 129, 0, 0, 0}
+	require.Equal(t, bytesArray, specialTokensToBin(specials))
+}
+
+func TestBinToSpecialTokens(t *testing.T) {
+	bytesArray := []byte{0, 0, 0, 1, 0, 0, 1, 3, 0, 2, 37, 2, 129, 0, 0, 0}
+	specials := specialTokens{1, 259, 2*256*256 + 37*256 + 2, -256 * 256 * 256 * 127}
+	require.Equal(t, specials, binToSpecialTokens(bytesArray))
+}
+
+func TestRuleToBin(t *testing.T) {
+	rule := rule{1, 2, 257}
+	bytesArray := []byte{0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 1, 1}
+	require.Equal(t, bytesArray, ruleToBin(rule))
+}
+
+func TestBinToRule(t *testing.T) {
+	rule := rule{1, 2, 257}
+	bytesArray := []byte{0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 1, 1}
+	require.Equal(t, rule, binToRule(bytesArray))
+}
+
+func TestReadModelFromBinary(t *testing.T) {
+	reader := bytes.NewReader([]byte{0, 0, 0, 5, 0, 0, 0, 4,
+		0, 0, 0, 99, 0, 0, 0, 6,
+		0, 0, 0, 98, 0, 0, 0, 7,
+		0, 0, 0, 95, 0, 0, 0, 4,
+		0, 0, 0, 100, 0, 0, 0, 5,
+		0, 0, 0, 97, 0, 0, 0, 8,
+		0, 0, 0, 4, 0, 0, 0, 8, 0, 0, 0, 9,
+		0, 0, 0, 4, 0, 0, 0, 6, 0, 0, 0, 10,
+		0, 0, 0, 4, 0, 0, 0, 5, 0, 0, 0, 11,
+		0, 0, 0, 4, 0, 0, 0, 7, 0, 0, 0, 12,
+		0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 3})
+	expected := Model{
+		map[rune]TokenID{97: 8, 98: 7, 99: 6, 100: 5, 95: 4},
+		map[TokenID]rune{4: 95, 5: 100, 6: 99, 7: 98, 8: 97},
+		[]rule{{4, 8, 9}, {4, 6, 10}, {4, 5, 11}, {4, 7, 12}},
+		map[TokenID]EncodedToken{4: {4}, 5: {5}, 6: {6}, 7: {7}, 8: {8}, 9: {4, 8}, 10: {4, 6}, 11: {4, 5}, 12: {4, 7}},
+		map[string]TokenID{"a": 8, "b": 7, "c": 6, "d": 5, "_": 4,
+			"_a": 9, "_b": 12, "_c": 10, "_d": 11},
+		specialTokens{1, 0, 2, 3},
+	}
+	model, err := ReadModelFromBinary(reader)
+	require.NoError(t, err)
 	require.Equal(t, expected, *model)
 }
