@@ -12,38 +12,54 @@ func TestNewModel(t *testing.T) {
 	require.Equal(t, 10, len(model.rules))
 }
 
-func TestDecodedTokenToString(t *testing.T) {
+func TestDecodeToken(t *testing.T) {
 	id2char := map[TokenID]rune{1: []rune("a")[0], 2: []rune("b")[0], 3: []rune("c")[0]}
 	word, err := DecodeToken(EncodedToken{1, 2, 1, 3, 3}, id2char)
 	require.NoError(t, err)
 	require.Equal(t, "abacc", word)
 }
 
-func TestSpecialTokensToBin(t *testing.T) {
+func TestSpecialTokensToBinary(t *testing.T) {
 	specials := specialTokens{1, 259, 2*256*256 + 37*256 + 2, -256 * 256 * 256 * 127}
 	bytesArray := []byte{0, 0, 0, 1, 0, 0, 1, 3, 0, 2, 37, 2, 129, 0, 0, 0}
-	require.Equal(t, bytesArray, specialTokensToBin(specials))
+	require.Equal(t, bytesArray, specials.toBinary())
 }
 
-func TestBinToSpecialTokens(t *testing.T) {
+func TestBinaryToSpecialTokens(t *testing.T) {
 	bytesArray := []byte{0, 0, 0, 1, 0, 0, 1, 3, 0, 2, 37, 2, 129, 0, 0, 0}
-	specials := specialTokens{1, 259, 2*256*256 + 37*256 + 2, -256 * 256 * 256 * 127}
-	require.Equal(t, specials, binToSpecialTokens(bytesArray))
+	expected := specialTokens{1, 259, 2*256*256 + 37*256 + 2, -256 * 256 * 256 * 127}
+	specials, err := binaryToSpecialTokens(bytesArray)
+	require.NoError(t, err)
+	require.Equal(t, expected, specials)
+	bytesArray = []byte{0, 0, 0, 1, 0, 0, 1, 3, 0, 2, 37, 2, 129, 0, 0}
+	specials, err = binaryToSpecialTokens(bytesArray)
+	require.Error(t, err)
+	bytesArray = []byte{}
+	specials, err = binaryToSpecialTokens(bytesArray)
+	require.Error(t, err)
 }
 
-func TestRuleToBin(t *testing.T) {
+func TestRuleToBinary(t *testing.T) {
 	rule := rule{1, 2, 257}
 	bytesArray := []byte{0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 1, 1}
-	require.Equal(t, bytesArray, ruleToBin(rule))
+	require.Equal(t, bytesArray, rule.toBinary())
 }
 
-func TestBinToRule(t *testing.T) {
-	rule := rule{1, 2, 257}
+func TestBinaryToRule(t *testing.T) {
+	expected := rule{1, 2, 257}
 	bytesArray := []byte{0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 1, 1}
-	require.Equal(t, rule, binToRule(bytesArray))
+	rule, err := binaryToRule(bytesArray)
+	require.NoError(t, err)
+	require.Equal(t, expected, rule)
+	bytesArray = []byte{0, 0, 0, 0, 0, 0, 2, 0, 0, 1, 1}
+	rule, err = binaryToRule(bytesArray)
+	require.Error(t, err)
+	bytesArray = []byte{}
+	rule, err = binaryToRule(bytesArray)
+	require.Error(t, err)
 }
 
-func TestReadModelFromBinary(t *testing.T) {
+func TestReadModel(t *testing.T) {
 	reader := bytes.NewReader([]byte{0, 0, 0, 5, 0, 0, 0, 4,
 		0, 0, 0, 99, 0, 0, 0, 6,
 		0, 0, 0, 98, 0, 0, 0, 7,
@@ -64,7 +80,52 @@ func TestReadModelFromBinary(t *testing.T) {
 			"_a": 9, "_b": 12, "_c": 10, "_d": 11},
 		specialTokens{1, 0, 2, 3},
 	}
-	model, err := ReadModelFromBinary(reader)
+	model, err := ReadModel(reader)
 	require.NoError(t, err)
 	require.Equal(t, expected, *model)
+
+	reader = bytes.NewReader([]byte{0, 0, 0, 5, 0, 0, 0, 4,
+		0, 0, 0, 99, 0, 0, 0, 6,
+		0, 0, 0, 98, 0, 0, 0, 7,
+		0, 0, 0, 95, 0, 0, 0, 4,
+		0, 0, 0, 100, 0, 0, 0, 5,
+		0, 0, 0, 97, 0, 0, 0, 8,
+		0, 0, 0, 4, 0, 0, 0, 8, 0, 0, 0, 9,
+		0, 0, 0, 4, 0, 0, 0, 6, 0, 0, 0, 10,
+		0, 0, 0, 4, 0, 0, 0, 5, 0, 0, 0, 11,
+		0, 0, 0, 4, 0, 0, 0, 7, 0, 0, 0, 12,
+		0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 3,
+		0, 0, 0, 4, 0, 0, 0, 5, 0, 0, 0, 11,
+		0, 0, 0, 4, 0, 0, 0, 7, 0, 0, 0, 12})
+	model, err = ReadModel(reader)
+	require.NoError(t, err)
+	require.Equal(t, expected, *model)
+
+	reader = bytes.NewReader([]byte{0, 0, 0, 5, 0, 0, 0, 4,
+		0, 0, 0, 99, 0, 0, 0, 6,
+		0, 0, 0, 98, 0, 0, 0, 7,
+		0, 0, 0, 95, 0, 0, 0, 4,
+		0, 0, 0, 100, 0, 0, 0, 5,
+		0, 0, 0, 97, 0, 0, 0, 8,
+		0, 0, 0, 4, 0, 0, 0, 8, 0, 0, 0, 9,
+		0, 0, 0, 4, 0, 0, 0, 6, 0, 0, 0, 10,
+		0, 0, 0, 4, 0, 0, 0, 5, 0, 0, 0, 11,
+		0, 0, 0, 4, 0, 0, 0, 7, 0, 0, 0, 12,
+		0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0})
+	model, err = ReadModel(reader)
+	require.Error(t, err)
+
+	reader = bytes.NewReader([]byte{0, 0, 0, 5, 0, 0, 0, 4,
+		0, 0, 0, 99, 0, 0, 0, 6,
+		0, 0, 0, 98, 0, 0, 0, 7,
+		0, 0, 0, 95, 0, 0, 0, 4,
+		0, 0, 0, 100, 0, 0, 0, 5,
+		0, 0, 0, 97, 0, 0, 0, 8,
+		0, 0, 0, 4, 0, 0, 0, 20, 0, 0, 0, 9,
+		0, 0, 0, 4, 0, 0, 0, 6, 0, 0, 0, 10,
+		0, 0, 0, 4, 0, 0, 0, 5, 0, 0, 0, 11,
+		0, 0, 0, 4, 0, 0, 0, 7, 0, 0, 0, 12,
+		0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 3})
+	model, err = ReadModel(reader)
+	require.Error(t, err)
 }

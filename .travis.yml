@@ -16,7 +16,8 @@ install:
 script:
   - make install-dev-deps
   - make check-style
-  - make test
+  - make test-coverage
+  - make codecov
 
 matrix:
   fast_finish: true
