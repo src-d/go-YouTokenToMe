@@ -137,24 +137,24 @@ func TestReadModel(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestModel_IdToToken(t *testing.T) {
-	token, err := BPE.IdToToken(11, false)
+func TestModel_IDToToken(t *testing.T) {
+	token, err := BPE.IDToToken(11, false)
 	require.NoError(t, err)
 	require.Equal(t, "_d", token)
 
-	token, err = BPE.IdToToken(12, true)
+	token, err = BPE.IDToToken(12, true)
 	require.NoError(t, err)
 	require.Equal(t, " b", token)
 
-	token, err = BPE.IdToToken(1, false)
+	token, err = BPE.IDToToken(1, false)
 	require.NoError(t, err)
-	require.Equal(t, UnkToken, token)
+	require.Equal(t, unkToken, token)
 
-	token, err = BPE.IdToToken(5, true)
+	token, err = BPE.IDToToken(5, true)
 	require.NoError(t, err)
 	require.Equal(t, "d", token)
 
-	token, err = BPE.IdToToken(13, true)
+	token, err = BPE.IDToToken(13, true)
 	require.Error(t, err)
 }
 

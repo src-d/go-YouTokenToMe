@@ -17,10 +17,12 @@ type TokenID uint32
 // EncodedString is a sequence of subword tokens ids
 type EncodedString []TokenID
 
-var UnkToken = "<UNK>"
-var PadToken = "<PAD>"
-var BosToken = "<BOS>"
-var EosToken = "<EOS>"
+const (
+	unkToken = "<UNK>"
+	padToken = "<PAD>"
+	bosToken = "<BOS>"
+	eosToken = "<EOS>"
+)
 
 type rule struct {
 	left   TokenID
@@ -195,19 +197,22 @@ func ReadModel(reader io.Reader) (*Model, error) {
 	return model, err
 }
 
-func (m Model) IdToToken(id TokenID, replaceSpace bool) (string, error) {
+// IDToToken returns string token corresponding to the given token id.
+// If replaceSpace is true, special space token that is used for marking starts of words
+// will be replaced with space.
+func (m Model) IDToToken(id TokenID, replaceSpace bool) (string, error) {
 	if _, ok := m.recipe[id]; !ok {
 		if id == TokenID(m.specialTokens.unk) {
-			return UnkToken, nil
+			return unkToken, nil
 		}
 		if id == TokenID(m.specialTokens.pad) {
-			return PadToken, nil
+			return padToken, nil
 		}
 		if id == TokenID(m.specialTokens.bos) {
-			return BosToken, nil
+			return bosToken, nil
 		}
 		if id == TokenID(m.specialTokens.eos) {
-			return EosToken, nil
+			return eosToken, nil
 		}
 		logrus.Errorf("%d: token id is out of vocabulary", id)
 		return "", errors.New("token id is out of vocabulary")
@@ -223,10 +228,12 @@ func (m Model) IdToToken(id TokenID, replaceSpace bool) (string, error) {
 	return DecodeToken(encodedToken, m.id2char)
 }
 
+// DecodeSentence decodes a sequence of token ids in a text sentence - string of words
+// with spaces in between
 func (m Model) DecodeSentence(encodedSentence EncodedString) (string, error) {
 	sentence := ""
-	for _, tokenId := range encodedSentence {
-		token, err := m.IdToToken(tokenId, true)
+	for _, tokenID := range encodedSentence {
+		token, err := m.IDToToken(tokenID, true)
 		if err != nil {
 			return sentence, err
 		}
@@ -235,12 +242,14 @@ func (m Model) DecodeSentence(encodedSentence EncodedString) (string, error) {
 	if string(sentence[0]) == " " {
 		sentence = sentence[1:]
 	}
-	if sentence[:len(BosToken)+1] == BosToken+" " {
-		sentence = BosToken + sentence[len(BosToken)+1:]
+	if sentence[:len(bosToken)+1] == bosToken+" " {
+		sentence = bosToken + sentence[len(bosToken)+1:]
 	}
 	return sentence, nil
 }
 
+// DecodeSentences decodes a sequence of encoded sentences - sequences of token ids -
+// into a sequence of corresponding text sentences
 func (m Model) DecodeSentences(encodedSentences []EncodedString) ([]string, error) {
 	sentences := make([]string, len(encodedSentences))
 	for i, encodedSentence := range encodedSentences {
@@ -253,6 +262,8 @@ func (m Model) DecodeSentences(encodedSentences []EncodedString) ([]string, erro
 	return sentences, nil
 }
 
+// DecodeFromStream decodes a sequence of encoded sentences written in an input stream
+// using Model.DecodeSentences
 func (m Model) DecodeFromStream(reader io.Reader) ([]string, error) {
 	scanner := bufio.NewScanner(reader)
 	sentences := make([]string, 0)
