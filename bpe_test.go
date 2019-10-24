@@ -12,6 +12,8 @@ var BPE = Model{
 	map[rune]TokenID{97: 8, 98: 7, 99: 6, 100: 5, 95: 4},
 	map[TokenID]rune{4: 95, 5: 100, 6: 99, 7: 98, 8: 97},
 	[]rule{{4, 8, 9}, {4, 6, 10}, {4, 5, 11}, {4, 7, 12}},
+	map[PairTokenID]int {PairTokenID((4 << 32) + 8): 0, PairTokenID((4 << 32) + 6): 1,
+		PairTokenID((4 << 32) + 5): 2, PairTokenID((4 << 32) + 7): 3},
 	map[TokenID]EncodedString{4: {4}, 5: {5}, 6: {6}, 7: {7}, 8: {8}, 9: {4, 8},
 		10: {4, 6}, 11: {4, 5}, 12: {4, 7}},
 	map[string]TokenID{"a": 8, "b": 7, "c": 6, "d": 5, "_": 4,
@@ -205,4 +207,8 @@ func TestModel_DecodeFromStream(t *testing.T) {
 12 8 6 5 11 6 9 9 5 5 8 11 7`)
 	sentences, err = BPE.DecodeFromStream(reader)
 	req.Error(err)
+}
+
+func TestModel_EncodeSentence(t *testing.T) {
+
 }

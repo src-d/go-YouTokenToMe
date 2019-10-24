@@ -2,6 +2,7 @@ package bpe
 
 import (
 	"bufio"
+	"container/heap"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -13,6 +14,7 @@ import (
 
 // TokenID is a numerical identifier of the subword token
 type TokenID uint32
+type PairTokenID uint64
 
 // EncodedString is a sequence of subword token identifiers
 type EncodedString []TokenID
@@ -23,6 +25,12 @@ const (
 	bosToken = "<BOS>"
 	eosToken = "<EOS>"
 )
+
+type EncodingConfig struct {
+	bos     bool
+	eos     bool
+	reverse bool
+}
 
 type rule struct {
 	left   TokenID
@@ -43,6 +51,7 @@ type Model struct {
 	char2id       map[rune]TokenID
 	id2char       map[TokenID]rune
 	rules         []rule
+	rule2id       map[PairTokenID]int
 	recipe        map[TokenID]EncodedString
 	revRecipe     map[string]TokenID
 	specialTokens specialTokens
@@ -54,11 +63,16 @@ func newModel(nRules int) *Model {
 		make(map[rune]TokenID),
 		make(map[TokenID]rune),
 		make([]rule, nRules),
+		make(map[PairTokenID]int),
 		make(map[TokenID]EncodedString),
 		make(map[string]TokenID),
 		specialTokens{-1, -1, -1, -1},
 		0,
 	}
+}
+
+func newPairTokenID(left, right TokenID) PairTokenID {
+	return (PairTokenID(left) << 32) + PairTokenID(right)
 }
 
 // DecodeToken converts the sequence of chars' ids into the string -
@@ -167,7 +181,6 @@ func ReadModel(reader io.Reader) (*Model, error) {
 		if err != nil {
 			return model, err
 		}
-		model.rules[i] = rule
 		if _, ok := model.recipe[rule.left]; !ok {
 			logrus.Errorf("%d: token id not described before", rule.left)
 			return model, errors.New("token id is impossible")
@@ -176,6 +189,8 @@ func ReadModel(reader io.Reader) (*Model, error) {
 			logrus.Errorf("%d: token id not described before", rule.right)
 			return model, errors.New("token id is impossible")
 		}
+		model.rules[i] = rule
+		model.rule2id[newPairTokenID(rule.left, rule.right)] = i
 		model.recipe[rule.result] = append(model.recipe[rule.left], model.recipe[rule.right]...)
 		resultString, err := DecodeToken(model.recipe[rule.result], model.id2char)
 		if err != nil {
@@ -286,4 +301,186 @@ func (m Model) DecodeFromStream(reader io.Reader) ([]string, error) {
 		return sentences, err
 	}
 	return sentences, nil
+}
+
+type encodingToken struct {
+	id   TokenID
+	prev int
+	next int
+}
+
+type mergeEvent struct {
+	priority int
+	pos      int
+}
+
+type mergeQueue []*mergeEvent
+
+func (mq mergeQueue) Len() int { return len(mq) }
+
+func (mq mergeQueue) Less(i, j int) bool {
+	return mq[i].priority < mq[j].priority ||
+		mq[i].priority == mq[j].priority && mq[i].pos < mq[j].pos
+}
+
+func (mq mergeQueue) Swap(i, j int) {
+	mq[i], mq[j] = mq[j], mq[i]
+}
+
+func (mq *mergeQueue) Push(x interface{}) {
+	*mq = append(*mq, x.(*mergeEvent))
+}
+
+func (mq *mergeQueue) Pop() interface{} {
+	old := *mq
+	n := len(old)
+	item := old[n-1]
+	old[n-1] = nil // avoid memory leak
+	*mq = old[0 : n-1]
+	return item
+}
+
+func (m Model) EncodeSentence(sentence string, encodingConfig EncodingConfig,
+) (EncodedString, []string, error) {
+	var idOutput EncodedString
+	var stringOutput []string
+
+	if encodingConfig.bos {
+		if m.specialTokens.bos == -1 {
+			logrus.Error("Cannot use bos - model was trained without it")
+			return idOutput, stringOutput, errors.New("model trained withous bos")
+		}
+		idOutput = append(idOutput, TokenID(m.specialTokens.bos))
+		stringOutput = append(stringOutput, bosToken)
+	}
+	for _, word := range strings.Fields(sentence) {
+		var encodedWord = []encodingToken{{m.spaceID, -1, 1}}
+		var pendingMerges = make(mergeQueue, 0)
+		var unknownTokens = make(map[TokenID]string)
+		var unknownID = TokenID(1e9)
+		// Check whether two consecutive tokens can be merged and if so add merge suggestion to
+		// the priority queue
+		pushIfRuleExists := func(leftPos int) {
+			rightPos := encodedWord[leftPos].next
+			ruleCandidate := newPairTokenID(encodedWord[leftPos].id, encodedWord[rightPos].id)
+			if priority, ok := m.rule2id[ruleCandidate]; ok {
+				heap.Push(&pendingMerges, &mergeEvent{priority, leftPos})
+			}
+		}
+		// Build linked list corresponding to the word's split on known chars and unknown tokens
+		unknownToken := ""
+		for _, char := range word {
+			if charID, ok := m.char2id[char]; ok {
+				if len(unknownToken) > 0 {
+					unknownTokens[unknownID] = unknownToken
+					encodedWord = append(encodedWord,
+						encodingToken{unknownID, len(encodedWord) - 1, len(encodedWord) + 1})
+					unknownID++
+				}
+				encodedWord = append(encodedWord,
+					encodingToken{charID, len(encodedWord) - 1, len(encodedWord) + 1})
+				if len(encodedWord) > 1 {
+					pushIfRuleExists(len(encodedWord) - 2)
+				}
+			} else {
+				unknownToken += string(char)
+			}
+		}
+		encodedWord[len(encodedWord)-1].next = -1
+		// Perform merges of subword tokens in the word according to the BPE model rules
+		for len(pendingMerges) > 0 {
+			event := heap.Pop(&pendingMerges).(*mergeEvent)
+			proposedRule := m.rules[event.priority]
+			leftPos := event.pos
+			leftToken := encodedWord[leftPos]
+			rightPos := leftToken.next
+			if rightPos == -1 {
+				continue
+			}
+			rightToken := encodedWord[rightPos]
+			// Check that the tokens suggested for the merge have not changed
+			if proposedRule.left != leftToken.id || proposedRule.right != rightToken.id {
+				continue
+			}
+			// Create token as a merge of the right and the left ones
+			leftToken.next = rightToken.next
+			leftToken.id = proposedRule.result
+			// Put merged token on the place of the left token
+			encodedWord[leftPos] = leftToken
+			// Put 'empty' token on the place of the right token
+			encodedWord[rightPos] = encodingToken{0, -1, -1}
+			// Add suggestions for merges for the new merged token
+			if rightToken.next != -1 {
+				encodedWord[rightToken.next].prev = leftPos
+				pushIfRuleExists(leftPos)
+			}
+			if leftToken.prev != -1 {
+				pushIfRuleExists(leftToken.prev)
+			}
+		}
+		// Retrieve all tokens that are left and append them to the result for the whole sentence
+		pos := 0
+		for pos > -1 {
+			id := encodedWord[pos].id
+			if id >= TokenID(1e9) {
+				idOutput = append(idOutput, TokenID(m.specialTokens.unk))
+				stringOutput = append(stringOutput, unknownTokens[id])
+			} else {
+				token, err := m.IDToToken(id, false)
+				if err != nil {
+					return idOutput, stringOutput, err
+				}
+				idOutput = append(idOutput, id)
+				stringOutput = append(stringOutput, token)
+			}
+			pos = encodedWord[pos].next
+		}
+	}
+	if encodingConfig.eos {
+		if m.specialTokens.eos == -1 {
+			logrus.Error("Cannot use eos - model was trained without it")
+			return idOutput, stringOutput, errors.New("model trained withous eos")
+		}
+		idOutput = append(idOutput, TokenID(m.specialTokens.eos))
+		stringOutput = append(stringOutput, eosToken)
+	}
+	if encodingConfig.reverse {
+		for i := 0; i <= len(idOutput)/2; i++ {
+			idOutput[i], idOutput[len(idOutput)-i] = idOutput[len(idOutput)-i], idOutput[i]
+			stringOutput[i], stringOutput[len(idOutput)-i] = stringOutput[len(idOutput)-i], stringOutput[i]
+		}
+	}
+	return idOutput, stringOutput, nil
+}
+
+func (m Model) EncodeSentences(sentences []string, encodingConfig EncodingConfig) ([]EncodedString,
+	[][]string, error) {
+	idOutput := make([]EncodedString, len(sentences))
+	stringOutput := make([][]string, len(sentences))
+	for i, sentence := range sentences {
+		sentenceIds, sentenceTokens, err := m.EncodeSentence(sentence, encodingConfig)
+		if err != nil {
+			return idOutput, stringOutput, err
+		}
+		idOutput[i] = sentenceIds
+		stringOutput[i] = sentenceTokens
+	}
+	return idOutput, stringOutput, nil
+}
+
+func (m Model) EncodeStream(reader io.Reader, encodingConfig EncodingConfig) ([]EncodedString,
+	[][]string, error) {
+	scanner := bufio.NewScanner(reader)
+	var idOutput []EncodedString
+	var stringOutput [][]string
+	for scanner.Scan() {
+		sentenceIds, sentenceTokens, err := m.EncodeSentence(scanner.Text(), encodingConfig)
+		if err != nil {
+			return idOutput, stringOutput, err
+		}
+		idOutput = append(idOutput, sentenceIds)
+		stringOutput = append(stringOutput, sentenceTokens)
+	}
+	err := scanner.Err()
+	return idOutput, stringOutput, err
 }
