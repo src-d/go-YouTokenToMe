@@ -14,7 +14,7 @@ import (
 // TokenID is a numerical identifier of the subword token
 type TokenID uint32
 
-// EncodedString is a sequence of subword tokens ids
+// EncodedString is a sequence of subword token identifiers
 type EncodedString []TokenID
 
 const (
@@ -170,11 +170,11 @@ func ReadModel(reader io.Reader) (*Model, error) {
 		model.rules[i] = rule
 		if _, ok := model.recipe[rule.left]; !ok {
 			logrus.Errorf("%d: token id not described before", rule.left)
-			return model, errors.New("token id is out of vocabulary")
+			return model, errors.New("token id is impossible")
 		}
 		if _, ok := model.recipe[rule.right]; !ok {
 			logrus.Errorf("%d: token id not described before", rule.right)
-			return model, errors.New("token id is out of vocabulary")
+			return model, errors.New("token id is impossible")
 		}
 		model.recipe[rule.result] = append(model.recipe[rule.left], model.recipe[rule.right]...)
 		resultString, err := DecodeToken(model.recipe[rule.result], model.id2char)
@@ -202,20 +202,19 @@ func ReadModel(reader io.Reader) (*Model, error) {
 // will be replaced with space.
 func (m Model) IDToToken(id TokenID, replaceSpace bool) (string, error) {
 	if _, ok := m.recipe[id]; !ok {
-		if id == TokenID(m.specialTokens.unk) {
+		switch id {
+		case TokenID(m.specialTokens.unk):
 			return unkToken, nil
-		}
-		if id == TokenID(m.specialTokens.pad) {
+		case TokenID(m.specialTokens.pad):
 			return padToken, nil
-		}
-		if id == TokenID(m.specialTokens.bos) {
+		case TokenID(m.specialTokens.bos):
 			return bosToken, nil
-		}
-		if id == TokenID(m.specialTokens.eos) {
+		case TokenID(m.specialTokens.eos):
 			return eosToken, nil
+		default:
+			logrus.Errorf("%d: token id is impossible", id)
+			return "", errors.New("token id is impossible")
 		}
-		logrus.Errorf("%d: token id is out of vocabulary", id)
-		return "", errors.New("token id is out of vocabulary")
 	}
 	encodedToken, _ := m.recipe[id]
 	if encodedToken[0] == m.spaceID && replaceSpace {
@@ -266,7 +265,7 @@ func (m Model) DecodeSentences(encodedSentences []EncodedString) ([]string, erro
 // using Model.DecodeSentences
 func (m Model) DecodeFromStream(reader io.Reader) ([]string, error) {
 	scanner := bufio.NewScanner(reader)
-	sentences := make([]string, 0)
+	var sentences []string
 	for scanner.Scan() {
 		numbers := strings.Fields(scanner.Text())
 		var encodedSentence = make([]TokenID, len(numbers))

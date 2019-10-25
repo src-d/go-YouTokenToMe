@@ -26,13 +26,14 @@ func TestNewModel(t *testing.T) {
 }
 
 func TestDecodeToken(t *testing.T) {
+	req := require.New(t)
 	id2char := map[TokenID]rune{1: []rune("a")[0], 2: []rune("b")[0], 3: []rune("c")[0]}
 	word, err := DecodeToken(EncodedString{1, 2, 1, 3, 3}, id2char)
-	require.NoError(t, err)
-	require.Equal(t, "abacc", word)
+	req.NoError(err)
+	req.Equal("abacc", word)
 
 	word, err = DecodeToken(EncodedString{1, 2, 4, 3, 3}, id2char)
-	require.Error(t, err)
+	req.Error(err)
 }
 
 func TestSpecialTokens_ToBinary(t *testing.T) {
@@ -42,17 +43,18 @@ func TestSpecialTokens_ToBinary(t *testing.T) {
 }
 
 func TestBinaryToSpecialTokens(t *testing.T) {
+	req := require.New(t)
 	bytesArray := []byte{0, 0, 0, 1, 0, 0, 1, 3, 0, 2, 37, 2, 129, 0, 0, 0}
 	expected := specialTokens{1, 259, 2*256*256 + 37*256 + 2, -256 * 256 * 256 * 127}
 	specials, err := binaryToSpecialTokens(bytesArray)
-	require.NoError(t, err)
-	require.Equal(t, expected, specials)
+	req.NoError(err)
+	req.Equal(expected, specials)
 	bytesArray = []byte{0, 0, 0, 1, 0, 0, 1, 3, 0, 2, 37, 2, 129, 0, 0}
 	specials, err = binaryToSpecialTokens(bytesArray)
-	require.Error(t, err)
+	req.Error(err)
 	bytesArray = []byte{}
 	specials, err = binaryToSpecialTokens(bytesArray)
-	require.Error(t, err)
+	req.Error(err)
 }
 
 func TestRule_ToBinary(t *testing.T) {
@@ -62,20 +64,22 @@ func TestRule_ToBinary(t *testing.T) {
 }
 
 func TestBinaryToRule(t *testing.T) {
+	req := require.New(t)
 	expected := rule{1, 2, 257}
 	bytesArray := []byte{0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 1, 1}
 	rule, err := binaryToRule(bytesArray)
-	require.NoError(t, err)
-	require.Equal(t, expected, rule)
+	req.NoError(err)
+	req.Equal(expected, rule)
 	bytesArray = []byte{0, 0, 0, 0, 0, 0, 2, 0, 0, 1, 1}
 	rule, err = binaryToRule(bytesArray)
-	require.Error(t, err)
+	req.Error(err)
 	bytesArray = []byte{}
 	rule, err = binaryToRule(bytesArray)
-	require.Error(t, err)
+	req.Error(err)
 }
 
 func TestReadModel(t *testing.T) {
+	req := require.New(t)
 	reader := bytes.NewReader([]byte{0, 0, 0, 5, 0, 0, 0, 4,
 		0, 0, 0, 99, 0, 0, 0, 6,
 		0, 0, 0, 98, 0, 0, 0, 7,
@@ -88,8 +92,8 @@ func TestReadModel(t *testing.T) {
 		0, 0, 0, 4, 0, 0, 0, 7, 0, 0, 0, 12,
 		0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 3})
 	model, err := ReadModel(reader)
-	require.NoError(t, err)
-	require.Equal(t, BPE, *model)
+	req.NoError(err)
+	req.Equal(BPE, *model)
 
 	reader = bytes.NewReader([]byte{0, 0, 0, 5, 0, 0, 0, 4,
 		0, 0, 0, 99, 0, 0, 0, 6,
@@ -105,8 +109,8 @@ func TestReadModel(t *testing.T) {
 		0, 0, 0, 4, 0, 0, 0, 5, 0, 0, 0, 11,
 		0, 0, 0, 4, 0, 0, 0, 7, 0, 0, 0, 12})
 	model, err = ReadModel(reader)
-	require.NoError(t, err)
-	require.Equal(t, BPE, *model)
+	req.NoError(err)
+	req.Equal(BPE, *model)
 
 	reader = bytes.NewReader([]byte{0, 0, 0, 5, 0, 0, 0, 4,
 		0, 0, 0, 99, 0, 0, 0, 6,
@@ -120,7 +124,7 @@ func TestReadModel(t *testing.T) {
 		0, 0, 0, 4, 0, 0, 0, 7, 0, 0, 0, 12,
 		0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0})
 	model, err = ReadModel(reader)
-	require.Error(t, err)
+	req.Error(err)
 
 	reader = bytes.NewReader([]byte{0, 0, 0, 5, 0, 0, 0, 4,
 		0, 0, 0, 99, 0, 0, 0, 6,
@@ -134,67 +138,71 @@ func TestReadModel(t *testing.T) {
 		0, 0, 0, 4, 0, 0, 0, 7, 0, 0, 0, 12,
 		0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 3})
 	model, err = ReadModel(reader)
-	require.Error(t, err)
+	req.Error(err)
 }
 
 func TestModel_IDToToken(t *testing.T) {
+	req := require.New(t)
 	token, err := BPE.IDToToken(11, false)
-	require.NoError(t, err)
-	require.Equal(t, "_d", token)
+	req.NoError(err)
+	req.Equal("_d", token)
 
 	token, err = BPE.IDToToken(12, true)
-	require.NoError(t, err)
-	require.Equal(t, " b", token)
+	req.NoError(err)
+	req.Equal(" b", token)
 
 	token, err = BPE.IDToToken(1, false)
-	require.NoError(t, err)
-	require.Equal(t, unkToken, token)
+	req.NoError(err)
+	req.Equal(unkToken, token)
 
 	token, err = BPE.IDToToken(5, true)
-	require.NoError(t, err)
-	require.Equal(t, "d", token)
+	req.NoError(err)
+	req.Equal("d", token)
 
 	token, err = BPE.IDToToken(13, true)
-	require.Error(t, err)
+	req.Error(err)
 }
 
 func TestModel_DecodeSentence(t *testing.T) {
+	req := require.New(t)
 	sentence, err := BPE.DecodeSentence(EncodedString{2, 10, 7, 12, 6, 6, 11, 9, 8, 7, 3, 0})
-	require.NoError(t, err)
-	require.Equal(t, "<BOS>cb bcc d aab<EOS><PAD>", sentence)
+	req.NoError(err)
+	req.Equal("<BOS>cb bcc d aab<EOS><PAD>", sentence)
 
 	sentence, err = BPE.DecodeSentence(EncodedString{12, 8, 6, 5, 11, 6, 9, 9, 5, 5, 8, 11, 7})
-	require.NoError(t, err)
-	require.Equal(t, "bacd dc a adda db", sentence)
+	req.NoError(err)
+	req.Equal("bacd dc a adda db", sentence)
 
 	sentence, err = BPE.DecodeSentence(EncodedString{12, 8, 13, 5, 11, 6, 9, 9, 5, 5, 8, 11, 7})
-	require.Error(t, err)
+	req.Error(err)
 }
 
 func TestModel_DecodeSentences(t *testing.T) {
+	req := require.New(t)
 	encodedSentences := []EncodedString{
 		{2, 10, 7, 12, 6, 6, 11, 9, 8, 7, 3, 0},
 		{12, 8, 6, 5, 11, 6, 9, 9, 5, 5, 8, 11, 7}}
 	sentences, err := BPE.DecodeSentences(encodedSentences)
-	require.NoError(t, err)
-	require.Equal(t, []string{"<BOS>cb bcc d aab<EOS><PAD>", "bacd dc a adda db"}, sentences)
+	req.NoError(err)
+	req.Equal([]string{"<BOS>cb bcc d aab<EOS><PAD>", "bacd dc a adda db"}, sentences)
 
 	encodedSentences = []EncodedString{
 		{2, 10, 7, 12, 6, 6, 11, 9, 8, 7, 3, 0},
 		{12, 8, 6, 5, 13, 6, 9, 9, 5, 5, 8, 11, 7}}
 	sentences, err = BPE.DecodeSentences(encodedSentences)
-	require.Error(t, err)
+	req.Error(err)
 }
 
 func TestModel_DecodeFromStream(t *testing.T) {
+	req := require.New(t)
 	reader := strings.NewReader(`2 10 7 12 6 6 11 9 8 7 3 0
 12 8 6 5 11 6 9 9 5 5 8 11 7`)
 	sentences, err := BPE.DecodeFromStream(reader)
-	require.NoError(t, err)
-	require.Equal(t, []string{"<BOS>cb bcc d aab<EOS><PAD>", "bacd dc a adda db"}, sentences)
+	req.NoError(err)
+	req.Equal([]string{"<BOS>cb bcc d aab<EOS><PAD>", "bacd dc a adda db"}, sentences)
 
 	reader = strings.NewReader(`2 20 7 12 6 6 11 9 8 7 3 0
 12 8 6 5 11 6 9 9 5 5 8 11 7`)
 	sentences, err = BPE.DecodeFromStream(reader)
-	require.Error(t, err)
+	req.Error(err)
 }
