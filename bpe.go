@@ -15,8 +15,8 @@ import (
 // TokenID is a numerical identifier of the subword token
 type TokenID uint32
 
-// PairTokenID is a bytes-concatenation of two TokenIDs
-type PairTokenID uint64
+// TokenIDPair is a concatenation of two TokenIDs that is used as the key type in rule2id map.
+type TokenIDPair uint64
 
 // EncodedString is a sequence of subword token identifiers
 type EncodedString []TokenID
@@ -54,7 +54,7 @@ type Model struct {
 	char2id       map[rune]TokenID
 	id2char       map[TokenID]rune
 	rules         []rule
-	rule2id       map[PairTokenID]int
+	rule2id       map[TokenIDPair]int
 	recipe        map[TokenID]EncodedString
 	revRecipe     map[string]TokenID
 	specialTokens specialTokens
@@ -66,7 +66,7 @@ func newModel(nRules int) *Model {
 		make(map[rune]TokenID),
 		make(map[TokenID]rune),
 		make([]rule, nRules),
-		make(map[PairTokenID]int),
+		make(map[TokenIDPair]int),
 		make(map[TokenID]EncodedString),
 		make(map[string]TokenID),
 		specialTokens{-1, -1, -1, -1},
@@ -74,8 +74,8 @@ func newModel(nRules int) *Model {
 	}
 }
 
-func newPairTokenID(left, right TokenID) PairTokenID {
-	return (PairTokenID(left) << 32) + PairTokenID(right)
+func newTokenIDPair(left, right TokenID) TokenIDPair {
+	return (TokenIDPair(left) << 32) + TokenIDPair(right)
 }
 
 // DecodeToken converts the sequence of chars' ids into the string -
@@ -193,7 +193,7 @@ func ReadModel(reader io.Reader) (*Model, error) {
 			return model, errors.New("token id is impossible")
 		}
 		model.rules[i] = rule
-		model.rule2id[newPairTokenID(rule.left, rule.right)] = i
+		model.rule2id[newTokenIDPair(rule.left, rule.right)] = i
 		model.recipe[rule.result] = append(model.recipe[rule.left], model.recipe[rule.right]...)
 		resultString, err := DecodeToken(model.recipe[rule.result], model.id2char)
 		if err != nil {
@@ -347,59 +347,57 @@ func (mq *mergeQueue) Pop() interface{} {
 	return item
 }
 
-// EncodeSentence accepts string of space-separated words and tokenizes each word
+// EncodeSentence takes a string of space-separated words and tokenizes each word
 // according to the BPE rules. Through encodingConfig one can state whether to add BOS, EOS tokens
-// and whether to reverse the output sequences. EncodeSentence returns both numerical encoding
-// and sequence of text tokens of the sentence.
+// and whether to reverse the output sequences. EncodeSentence returns the numerical encoding
+// of the sentence.
 func (m Model) EncodeSentence(sentence string, encodingConfig EncodingConfig,
-) (EncodedString, []string, error) {
-	var idOutput EncodedString
-	var stringOutput []string
+) (EncodedString, error) {
+	var encodedSentence EncodedString
 
 	if encodingConfig.bos {
 		if m.specialTokens.bos == -1 {
 			logrus.Error("Cannot use bos - model was trained without it")
-			return idOutput, stringOutput, errors.New("model trained withous bos")
+			return encodedSentence, errors.New("model was trained withous bos")
 		}
-		idOutput = append(idOutput, TokenID(m.specialTokens.bos))
-		stringOutput = append(stringOutput, bosToken)
+		encodedSentence = append(encodedSentence, TokenID(m.specialTokens.bos))
 	}
 	for _, word := range strings.Fields(sentence) {
+		if len(word) == 0 {
+			continue
+		}
 		var encodedWord = []encodingToken{{m.spaceID, -1, 1}}
-		var pendingMerges = make(mergeQueue, 0)
-		var unknownTokens = make(map[TokenID]string)
-		var unknownID = TokenID(1e9)
+		var pendingMerges mergeQueue
 		// Check whether two consecutive tokens can be merged and if so add merge suggestion to
 		// the priority queue
 		pushIfRuleExists := func(leftPos int) {
 			rightPos := encodedWord[leftPos].next
-			ruleCandidate := newPairTokenID(encodedWord[leftPos].id, encodedWord[rightPos].id)
+			ruleCandidate := newTokenIDPair(encodedWord[leftPos].id, encodedWord[rightPos].id)
 			if priority, ok := m.rule2id[ruleCandidate]; ok {
 				heap.Push(&pendingMerges, &mergeEvent{priority, leftPos})
 			}
 		}
 		// Build linked list corresponding to the word's split on known chars and unknown tokens
-		unknownToken := ""
+		unknownToken := false
 		for _, char := range word {
 			if charID, ok := m.char2id[char]; ok {
-				if len(unknownToken) > 0 {
-					unknownTokens[unknownID] = unknownToken
+				if unknownToken {
 					encodedWord = append(encodedWord,
-						encodingToken{unknownID, len(encodedWord) - 1, len(encodedWord) + 1})
-					unknownID++
-					unknownToken = ""
+						encodingToken{TokenID(m.specialTokens.unk), len(encodedWord) - 1,
+							len(encodedWord) + 1})
+					unknownToken = false
 				}
 				encodedWord = append(encodedWord,
 					encodingToken{charID, len(encodedWord) - 1, len(encodedWord) + 1})
 				pushIfRuleExists(len(encodedWord) - 2)
 			} else {
-				unknownToken += string(char)
+				unknownToken = true
 			}
 		}
-		if len(unknownToken) > 0 {
-			unknownTokens[unknownID] = unknownToken
+		if unknownToken {
 			encodedWord = append(encodedWord,
-				encodingToken{unknownID, len(encodedWord) - 1, len(encodedWord) + 1})
+				encodingToken{TokenID(m.specialTokens.unk), len(encodedWord) - 1,
+					len(encodedWord) + 1})
 		}
 		encodedWord[len(encodedWord)-1].next = -1
 		// Perform merges of subword tokens in the word according to the BPE model rules
@@ -434,77 +432,59 @@ func (m Model) EncodeSentence(sentence string, encodingConfig EncodingConfig,
 			}
 		}
 		// Retrieve all tokens that are left and append them to the result for the whole sentence
-		pos := 0
-		for pos > -1 {
-			id := encodedWord[pos].id
-			if id >= TokenID(1e9) {
-				idOutput = append(idOutput, TokenID(m.specialTokens.unk))
-				stringOutput = append(stringOutput, unknownTokens[id])
-			} else {
-				token, err := m.IDToToken(id, false)
-				if err != nil {
-					return idOutput, stringOutput, err
-				}
-				idOutput = append(idOutput, id)
-				stringOutput = append(stringOutput, token)
-			}
+		for pos := 0; pos > -1; {
+			encodedSentence = append(encodedSentence, encodedWord[pos].id)
 			pos = encodedWord[pos].next
 		}
 	}
 	if encodingConfig.eos {
 		if m.specialTokens.eos == -1 {
 			logrus.Error("Cannot use eos - model was trained without it")
-			return idOutput, stringOutput, errors.New("model trained withous eos")
+			return encodedSentence, errors.New("model was trained withous eos")
 		}
-		idOutput = append(idOutput, TokenID(m.specialTokens.eos))
-		stringOutput = append(stringOutput, eosToken)
+		encodedSentence = append(encodedSentence, TokenID(m.specialTokens.eos))
 	}
 	if encodingConfig.reverse {
-		for i := 0; i <= len(idOutput)/2; i++ {
-			idOutput[i], idOutput[len(idOutput)-i-1] = idOutput[len(idOutput)-i-1], idOutput[i]
-			stringOutput[i], stringOutput[len(idOutput)-i-1] = stringOutput[len(idOutput)-i-1], stringOutput[i]
+		for i := 0; i < len(encodedSentence)/2; i++ {
+			encodedSentence[i], encodedSentence[len(encodedSentence)-i-1] =
+				encodedSentence[len(encodedSentence)-i-1], encodedSentence[i]
 		}
 	}
-	return idOutput, stringOutput, nil
+	return encodedSentence, nil
 }
 
-// EncodeSentences accepts sequence of strings of space-separated words and tokenizes each word
-// according to the BPE rules. Through encodingConfig one can state whether to add BOS and
-// EOS tokens (beginning and end of sentence) and whether to reverse the output sequences.
-// EncodeSentences returns both numerical encodings and sequences of text tokens of the sentences.
+// EncodeSentences takes a sequence of strings which consist of space-separated words and tokenizes
+// each word according to the BPE rules. Through encodingConfig one can state whether to add BOS
+// and EOS tokens (beginning and end of sentence) and whether to reverse the output sequences.
+// EncodeSentences returns the numerical encodings of the sentences.
 func (m Model) EncodeSentences(sentences []string, encodingConfig EncodingConfig) ([]EncodedString,
-	[][]string, error) {
-	idOutput := make([]EncodedString, len(sentences))
-	stringOutput := make([][]string, len(sentences))
+	error) {
+	encodedSentence := make([]EncodedString, len(sentences))
 	for i, sentence := range sentences {
-		sentenceIds, sentenceTokens, err := m.EncodeSentence(sentence, encodingConfig)
+		sentenceIds, err := m.EncodeSentence(sentence, encodingConfig)
 		if err != nil {
-			return idOutput, stringOutput, err
+			return encodedSentence, err
 		}
-		idOutput[i] = sentenceIds
-		stringOutput[i] = sentenceTokens
+		encodedSentence[i] = sentenceIds
 	}
-	return idOutput, stringOutput, nil
+	return encodedSentence, nil
 }
 
-// EncodeStream reads sequence of strings of space-separated words from the given stream and
-// tokenizes each word according to the BPE rules. Through encodingConfig one can state whether
-// to add BOS and EOS tokens (beginning and end of sentence) and whether to reverse the output
-// sequences. EncodeStream returns both numerical encodings and sequences of text tokens of
-// the sentences.
+// EncodeStream reads a sequence of strings which consist of space-separated words from the given
+// stream and tokenizes each word according to the BPE rules. Through encodingConfig one can state
+// whether to add BOS and EOS tokens (beginning and end of sentence) and whether to reverse the
+// output sequences. EncodeStream returns the numerical encodings of the sentences.
 func (m Model) EncodeStream(reader io.Reader, encodingConfig EncodingConfig) ([]EncodedString,
-	[][]string, error) {
+	error) {
 	scanner := bufio.NewScanner(reader)
-	var idOutput []EncodedString
-	var stringOutput [][]string
+	var encodedSentence []EncodedString
 	for scanner.Scan() {
-		sentenceIds, sentenceTokens, err := m.EncodeSentence(scanner.Text(), encodingConfig)
+		sentenceIds, err := m.EncodeSentence(scanner.Text(), encodingConfig)
 		if err != nil {
-			return idOutput, stringOutput, err
+			return encodedSentence, err
 		}
-		idOutput = append(idOutput, sentenceIds)
-		stringOutput = append(stringOutput, sentenceTokens)
+		encodedSentence = append(encodedSentence, sentenceIds)
 	}
 	err := scanner.Err()
-	return idOutput, stringOutput, err
+	return encodedSentence, err
 }
